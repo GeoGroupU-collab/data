@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đo biên mép theo hàng ảnh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #e8ece6;
+    --panel: #f7f9f5;
+    --ink: #172228;
+    --muted: #5a6b70;
+    --rule: #c9d2cb;
+    --accent: #0f6b7a;
+    --accent-ink: #ffffff;
+    --left: #d1495b;
+    --right: #2e86ab;
+    --warn: #a73d2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12191c;
+      --panel: #1b252a;
+      --ink: #e5ece8;
+      --muted: #94a5a9;
+      --rule: #2f3f45;
+      --accent: #4fb3c4;
+      --accent-ink: #0b1a1e;
+      --left: #ff7d8e;
+      --right: #6fc1e6;
+      --warn: #ff9a85;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    font-family: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+    padding: 0 0 64px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  header { padding: 36px 0 20px; border-bottom: 1px solid var(--rule); margin-bottom: 28px; }
+  h1 { font-size: clamp(1.6rem, 3.4vw, 2.3rem); line-height: 1.15; margin: 0 0 8px; font-weight: 700; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 70ch; }
+  h2 { font-size: 1.15rem; margin: 0 0 12px; font-weight: 600; }
+  section { margin-bottom: 36px; }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 18px; }
+
+  .drop {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; text-align: center; padding: 30px 16px;
+    border: 2px dashed var(--rule); border-radius: 10px; cursor: pointer;
+    background: var(--panel); transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); }
+  .drop strong { font-weight: 600; }
+  .drop span { color: var(--muted); font-size: .92rem; }
+  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: end; margin-bottom: 14px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: .86rem; color: var(--muted); }
+  .field input {
+    width: 112px; padding: 8px 10px; font: inherit; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--rule); border-radius: 6px;
+  }
+  .field input:focus-visible, button:focus-visible, .drop:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .pickgrid { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 18px; align-items: start; }
+  .side { position: sticky; top: 16px; }
+  .side .controls { flex-direction: column; align-items: stretch; gap: 12px; margin-bottom: 16px; }
+  .side .field input { width: 100%; }
+  .side button { width: 100%; }
+  .side .hint { margin-top: 14px; }
+  .side #status { margin: 12px 0 0; min-height: 0; }
+  @media (max-width: 860px) {
+    .pickgrid { grid-template-columns: minmax(0, 1fr); }
+    .side { position: sticky; top: auto; bottom: 8px; order: 2; z-index: 5; }
+    .side .panel { padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+    .side .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-bottom: 10px; }
+    .side .hint, .side .info { display: none; }
+  }
+
+  button {
+    font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button.small { padding: 5px 10px; font-size: .84rem; margin-top: 8px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  .pickwrap { position: relative; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: #000; }
+  #picker { display: block; width: 100%; height: auto; cursor: crosshair; }
+  .hint { color: var(--muted); font-size: .9rem; margin: 10px 0 0; }
+  .info { font-size: .95rem; margin: 12px 0 0; }
+  .err { color: var(--warn); font-weight: 500; }
+
+  .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  figure { margin: 0; }
+  figure canvas {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--rule); border-radius: 6px; background: #fff;
+  }
+  figcaption { margin-top: 8px; font-size: .9rem; }
+  figcaption b { display: block; font-weight: 600; }
+  figcaption span { color: var(--muted); }
+  .legend { display: inline-flex; gap: 14px; margin-top: 4px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 5px; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 18px 0 12px; font-size: .95rem; }
+  .stats div b { font-weight: 600; }
+  table { border-collapse: collapse; font-size: .9rem; margin: 6px 0 18px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 16px 5px 0; text-align: left; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 600; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  #status { min-height: 1.6em; margin: 10px 0 0; color: var(--muted); font-size: .95rem; }
+  footer { color: var(--muted); font-size: .88rem; border-top: 1px solid var(--rule); padding-top: 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Đo biên mép theo hàng ảnh</h1>
+    <p>Tải ảnh lên, bấm chọn tâm trên lưới tọa độ, trang web sẽ cắt vùng quanh tâm, phân ngưỡng Otsu rồi ghi mép trái và mép phải của từng hàng ra file Excel.</p>
+  </header>
+
+  <section>
+    <h2>1. Tải ảnh lên</h2>
+    <label class="drop" id="drop">
+      <strong id="dropTitle">Chọn ảnh hoặc kéo thả vào đây</strong>
+      <span>JPG, PNG hoặc WebP. Ảnh được xử lý ngay trên máy bạn và không gửi đi đâu.</span>
+      <input type="file" id="file" accept="image/*">
+    </label>
+  </section>
+
+  <section id="pickSec" hidden>
+    <h2>2. Chọn tọa độ trung tâm</h2>
+    <div class="pickgrid">
+      <div class="pickwrap"><canvas id="picker"></canvas></div>
+      <aside class="side">
+        <div class="panel">
+          <div class="controls">
+            <div class="field"><label for="cx">Tâm x (px)</label><input type="number" id="cx" step="10"></div>
+            <div class="field"><label for="cy">Tâm y (px)</label><input type="number" id="cy" step="10"></div>
+            <div class="field"><label for="hx">Nửa rộng ± x (px)</label><input type="number" id="hx" value="500" min="1" step="50"></div>
+            <div class="field"><label for="hy">Nửa cao ± y (px)</label><input type="number" id="hy" value="1200" min="1" step="50"></div>
+          </div>
+          <button id="run">Chạy thuật toán</button>
+          <p class="hint">Bấm vào ảnh để đặt tâm, hoặc gõ số vào ô để chỉnh chính xác. Khung vàng là vùng sẽ được cắt.</p>
+          <p class="info" id="cropInfo"></p>
+          <p id="status" role="status" aria-live="polite"></p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="resSec" hidden>
+    <h2>3. Kết quả từng bước</h2>
+    <div class="steps" id="steps"></div>
+
+    <div class="stats" id="stats"></div>
+    <div id="preview"></div>
+    <div class="actions">
+      <button id="dlZip">Tải ảnh và dữ liệu</button>
+      <button id="dlImg" class="ghost">Tải 4 ảnh</button>
+    </div>
+  </section>
+
+  <footer>
+    Thuật toán: cắt ảnh màu theo tọa độ, chuyển xám, phân ngưỡng Otsu, rồi với mỗi hàng lấy pixel trắng đầu tiên và cuối cùng làm mép trái và mép phải.
+  </footer>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const fileEl = $('file'), dropEl = $('drop'), pickSec = $('pickSec'), resSec = $('resSec');
+  const picker = $('picker'), pctx = picker.getContext('2d');
+  const cxEl = $('cx'), cyEl = $('cy'), hxEl = $('hx'), hyEl = $('hy');
+  const statusEl = $('status'), cropInfo = $('cropInfo');
+  const state = { img: null, W: 0, H: 0, base: 'anh', images: null, xlsx: null };
+
+  const tick = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  /* ---------- Tải ảnh ---------- */
+  function onLoaded(img, file) {
+    state.img = img;
+    state.W = img.naturalWidth || img.width; state.H = img.naturalHeight || img.height;
+    state.base = file.name.replace(/\.[^.]+$/, '') || 'anh';
+    $('dropTitle').textContent = `${file.name} (${state.W} × ${state.H} px)`;
+    cxEl.value = Math.round(state.W / 2);
+    cyEl.value = Math.round(state.H / 2);
+    pickSec.hidden = false; resSec.hidden = true;
+    statusEl.className = ''; statusEl.textContent = '';
+    drawPicker();
+  }
+  function loadFail(msg) {
+    pickSec.hidden = false;
+    statusEl.className = 'err';
+    statusEl.textContent = msg || 'Không đọc được ảnh này. Hãy thử file JPG hoặc PNG.';
+  }
+  async function loadFile(file) {
+    if (!file) return;
+    // Cách 1: createImageBitmap (không cần blob URL, tự xoay theo EXIF)
+    try {
+      if (window.createImageBitmap) {
+        const bmp = await createImageBitmap(file);
+        return onLoaded(bmp, file);
+      }
+    } catch (e) { console.warn('createImageBitmap lỗi, thử cách khác', e); }
+    // Cách 2: FileReader -> data URL
+    const reader = new FileReader();
+    reader.onerror = () => loadFail();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => onLoaded(img, file);
+      img.onerror = () => loadFail();
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  fileEl.addEventListener('change', e => loadFile(e.target.files[0]));
+  ['dragenter', 'dragover'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('over'); }));
+  dropEl.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+
+  /* ---------- Vùng cắt ---------- */
+  function readParams() {
+    const hx = Math.max(1, Math.round(+hxEl.value || 1));
+    const hy = Math.max(1, Math.round(+hyEl.value || 1));
+    let cx = Math.round(+cxEl.value || 0), cy = Math.round(+cyEl.value || 0);
+    const fits = 2 * hx <= state.W && 2 * hy <= state.H;
+    if (fits) { cx = clamp(cx, hx, state.W - hx); cy = clamp(cy, hy, state.H - hy); }
+    return { hx, hy, cx, cy, fits };
+  }
+
+  /* ---------- Ảnh gốc có lưới ---------- */
+  /* Vẽ ảnh gốc + lưới + khung cắt lên canvas cv (rộng tối đa maxW px) */
+  function renderGrid(cv, maxW, p) {
+    const { W, H, img } = state;
+    const dw = Math.min(W, maxW), s = dw / W, dh = Math.round(H * s), u = dw / 1200;
+    cv.width = dw; cv.height = dh;
+    const g = cv.getContext('2d');
+    g.drawImage(img, 0, 0, dw, dh);
+
+    const sd = Math.min(W, 1200) / W;               // vạch chia luôn tính theo tỉ lệ hiển thị
+    const steps = [50, 100, 200, 250, 500, 1000, 2000];
+    const step = steps.find(v => v * sd >= 60) || 2000;
+    g.save();
+    g.lineWidth = Math.max(1, u); g.strokeStyle = 'rgba(255,80,80,.6)'; g.setLineDash([5 * u, 5 * u]);
+    g.beginPath();
+    for (let x = 0; x <= W; x += step) { const px = Math.round(x * s) + .5; g.moveTo(px, 0); g.lineTo(px, dh); }
+    for (let y = 0; y <= H; y += step) { const py = Math.round(y * s) + .5; g.moveTo(0, py); g.lineTo(dw, py); }
+    g.stroke(); g.restore();
+
+    const fs = Math.max(12, Math.round(dw / 75));
+    g.font = `600 ${fs}px "Be Vietnam Pro", sans-serif`;
+    g.textBaseline = 'top';
+    const label = (t, x, y) => {
+      const w = g.measureText(t).width + 6;
+      g.fillStyle = 'rgba(255,255,255,.82)'; g.fillRect(x, y, w, fs + 4);
+      g.fillStyle = '#7a1620'; g.fillText(t, x + 3, y + 2);
+    };
+    for (let x = step; x < W; x += step) label(String(x), Math.round(x * s) + 2, 2);
+    for (let y = step; y < H; y += step) label(String(y), 2, Math.round(y * s) + 2);
+
+    if (p.fits) {
+      const rx = (p.cx - p.hx) * s, ry = (p.cy - p.hy) * s, rw = 2 * p.hx * s, rh = 2 * p.hy * s;
+      g.fillStyle = 'rgba(255,210,63,.14)'; g.fillRect(rx, ry, rw, rh);
+      g.lineWidth = Math.max(2, dw / 400); g.strokeStyle = '#ffd23f'; g.strokeRect(rx, ry, rw, rh);
+      const cx = p.cx * s, cy = p.cy * s, r = Math.max(8, dw / 90);
+      g.beginPath(); g.moveTo(cx - r, cy); g.lineTo(cx + r, cy); g.moveTo(cx, cy - r); g.lineTo(cx, cy + r); g.stroke();
+    }
+  }
+
+  function drawPicker() {
+    if (!state.img) return;
+    const p = readParams();
+    renderGrid(picker, 1200, p);
+    if (p.fits) {
+      cropInfo.className = 'info';
+      cropInfo.textContent = `Vùng cắt: x từ ${p.cx - p.hx} đến ${p.cx + p.hx}, y từ ${p.cy - p.hy} đến ${p.cy + p.hy}, kích thước ${2 * p.hx} × ${2 * p.hy} px.` +
+        ((p.cx !== Math.round(+cxEl.value) || p.cy !== Math.round(+cyEl.value)) ? ' Tâm đã được dịch vào trong để vùng cắt không vượt ra ngoài ảnh.' : '');
+    } else {
+      cropInfo.className = 'info err';
+      cropInfo.textContent = `Vùng cắt ${2 * p.hx} × ${2 * p.hy} px lớn hơn ảnh (${state.W} × ${state.H} px). Hãy giảm giá trị ±x hoặc ±y.`;
+    }
+  }
+  [cxEl, cyEl, hxEl, hyEl].forEach(el => el.addEventListener('input', drawPicker));
+  picker.addEventListener('click', e => {
+    const r = picker.getBoundingClientRect();
+    cxEl.value = Math.round((e.clientX - r.left) / r.width * state.W);
+    cyEl.value = Math.round((e.clientY - r.top) / r.height * state.H);
+    drawPicker();
+  });
+
+  /* ---------- Hiển thị một bước ---------- */
+  function addStep(title, desc, canvas, extraHTML, fileSuffix) {
+    const fig = document.createElement('figure');
+    fig.appendChild(canvas);
+    const cap = document.createElement('figcaption');
+    cap.innerHTML = `<b>${title}</b><span>${desc}</span>${extraHTML || ''}`;
+    if (fileSuffix) {
+      const b = document.createElement('button');
+      b.className = 'ghost small'; b.textContent = 'Tải ảnh này';
+      b.addEventListener('click', () => canvas.toBlob(bl => save(bl, `${state.base}_${fileSuffix}.png`), 'image/png'));
+      cap.appendChild(b);
+    }
+    fig.appendChild(cap);
+    $('steps').appendChild(fig);
+  }
+  function canvasFromData(arr, w, h, isGray) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const id = new ImageData(w, h);
+    for (let i = 0, n = w * h; i < n; i++) {
+      const v = arr[i]; id.data[4 * i] = v; id.data[4 * i + 1] = v; id.data[4 * i + 2] = v; id.data[4 * i + 3] = 255;
+    }
+    c.getContext('2d').putImageData(id, 0, 0);
+    return c;
+  }
+
+  /* ---------- Otsu (giống cv2.THRESH_OTSU) ---------- */
+  function otsu(hist, total) {
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, best = -1, t = 0;
+    for (let i = 0; i < 256; i++) {
+      wB += hist[i]; if (wB === 0) continue;
+      const wF = total - wB; if (wF === 0) break;
+      sumB += i * hist[i];
+      const mB = sumB / wB, mF = (sum - sumB) / wF;
+      const between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > best) { best = between; t = i; }
+    }
+    return t;
+  }
+
+  /* ---------- Chạy thuật toán ---------- */
+  $('run').addEventListener('click', async () => {
+    const p = readParams();
+    statusEl.className = '';
+    if (!p.fits) { statusEl.className = 'err'; statusEl.textContent = 'Vùng cắt lớn hơn ảnh, hãy giảm ±x hoặc ±y.'; return; }
+    const btn = $('run'); btn.disabled = true;
+    const { hx, hy, cx, cy } = p, w = 2 * hx, h = 2 * hy, x1 = cx - hx, y1 = cy - hy;
+    $('steps').innerHTML = ''; $('preview').innerHTML = ''; $('stats').innerHTML = '';
+    resSec.hidden = false;
+
+    try {
+      statusEl.textContent = 'Đang cắt ảnh...'; await tick();
+      const cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+      const cctx = cc.getContext('2d', { willReadFrequently: true });
+      cctx.drawImage(state.img, x1, y1, w, h, 0, 0, w, h);
+      addStep('Bước 1: Cắt ảnh màu', `Tâm (${cx}, ${cy}), ${w} × ${h} px`, cc, '', '2_cat_mau');
+
+      statusEl.textContent = 'Đang chuyển ảnh xám...'; await tick();
+      const d = cctx.getImageData(0, 0, w, h).data;
+      const n = w * h, gray = new Uint8Array(n), hist = new Uint32Array(256);
+      for (let i = 0; i < n; i++) {
+        const g = Math.round(0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2]);
+        gray[i] = g; hist[g]++;
+      }
+      const grayCanvas = canvasFromData(gray, w, h);
+      addStep('Bước 2: Ảnh xám', 'Trọng số 0.299 R + 0.587 G + 0.114 B', grayCanvas, '', '3_xam');
+
+      statusEl.textContent = 'Đang phân ngưỡng Otsu...'; await tick();
+      const t = otsu(hist, n);
+      const bw = new Uint8Array(n);
+      for (let i = 0; i < n; i++) bw[i] = gray[i] > t ? 255 : 0;
+      const bwCanvas = canvasFromData(bw, w, h);
+      addStep('Bước 3: Phân ngưỡng Otsu', `Ngưỡng tự tính: ${t}`, bwCanvas, '', '4_otsu');
+
+      statusEl.textContent = 'Đang tìm mép trái và mép phải từng hàng...'; await tick();
+      const rows = [], L = new Int32Array(h).fill(-1), R = new Int32Array(h).fill(-1);
+      for (let y = 0; y < h; y++) {
+        const b = y * w; let l = -1, r = -1;
+        for (let x = 0; x < w; x++) if (bw[b + x] === 255) { l = x; break; }
+        if (l >= 0) {
+          for (let x = w - 1; x >= 0; x--) if (bw[b + x] === 255) { r = x; break; }
+          L[y] = l; R[y] = r;
+          rows.push({ y, left_boundary: l, right_boundary: r });
+        }
+      }
+      const ov = canvasFromData(bw, w, h), octx = ov.getContext('2d');
+      octx.lineWidth = Math.max(4, Math.round(w / 200)); octx.lineJoin = 'round';
+      const trace = (arr, color) => {
+        octx.strokeStyle = color; octx.beginPath(); let pen = false;
+        for (let y = 0; y < h; y++) {
+          if (arr[y] < 0) { pen = false; continue; }
+          if (!pen) { octx.moveTo(arr[y] + .5, y + .5); pen = true; } else octx.lineTo(arr[y] + .5, y + .5);
+        }
+        octx.stroke();
+      };
+      trace(L, '#e11d48'); trace(R, '#0ea5e9');
+      addStep('Bước 4: Mép trái và mép phải', `${rows.length} / ${h} hàng có điểm trắng`, ov,
+        '<div class="legend"><span><i style="background:var(--left)"></i>Mép trái</span><span><i style="background:var(--right)"></i>Mép phải</span></div>');
+
+      statusEl.textContent = 'Đang tạo file Excel...'; await tick();
+      const ws = XLSX.utils.json_to_sheet(rows, { header: ['y', 'left_boundary', 'right_boundary'] });
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+      state.xlsx = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      statusEl.textContent = 'Đang tạo ảnh lưới để tải về...'; await tick();
+      const toBlob = (c, type, q) => new Promise(res => c.toBlob(res, type, q));
+      const gridCanvas = document.createElement('canvas');
+      renderGrid(gridCanvas, 4000, p);
+      state.images = [
+        { name: `${state.base}_1_luoi.jpg`, blob: await toBlob(gridCanvas, 'image/jpeg', 0.92) },
+        { name: `${state.base}_2_cat_mau.png`, blob: await toBlob(cc, 'image/png') },
+        { name: `${state.base}_3_xam.png`, blob: await toBlob(grayCanvas, 'image/png') },
+        { name: `${state.base}_4_otsu.png`, blob: await toBlob(bwCanvas, 'image/png') }
+      ];
+
+      $('stats').innerHTML =
+        `<div>Ảnh: <b>${state.base}</b></div><div>Ngưỡng Otsu: <b>${t}</b></div><div>Số hàng có dữ liệu: <b>${rows.length}</b></div>`;
+      const head = '<tr><th>y</th><th>left_boundary</th><th>right_boundary</th></tr>';
+      const body = rows.slice(0, 6).map(r => `<tr><td>${r.y}</td><td>${r.left_boundary}</td><td>${r.right_boundary}</td></tr>`).join('');
+      $('preview').innerHTML = rows.length
+        ? `<table><caption hidden>Sáu hàng đầu của dữ liệu</caption>${head}${body}</table>`
+        : '<p class="err">Không có pixel trắng nào trong vùng cắt, file Excel sẽ trống. Hãy thử chọn tâm khác.</p>';
+      statusEl.textContent = 'Xong. Có thể tải kết quả bên dưới.';
+      resSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      console.error(err);
+      statusEl.className = 'err';
+      statusEl.textContent = 'Có lỗi khi xử lý: ' + err.message + '. Ảnh quá lớn có thể làm trình duyệt hết bộ nhớ.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ---------- Tải về ---------- */
+  function save(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  $('dlImg').addEventListener('click', async () => {
+    if (!state.images) return;
+    const zip = new JSZip();
+    state.images.forEach(f => zip.file(f.name, f.blob));
+    save(await zip.generateAsync({ type: 'blob' }), `${state.base}_anh.zip`);
+  });
+  $('dlZip').addEventListener('click', async () => {
+    if (!state.images || !state.xlsx) return;
+    const zip = new JSZip();
+    zip.file(`${state.base}.xlsx`, state.xlsx);
+    state.images.forEach(f => zip.file(f.name, f.blob));
+    save(await zip.generateAsync({ type: 'blob' }), `${state.base}.zip`);
+  });
+})();
+</script>
+</body>
+</html>
